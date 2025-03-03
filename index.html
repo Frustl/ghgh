@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    <title>Desert Shooter PRO</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(45deg, #ec8c69, #e6b980);
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Press Start 2P', cursive;
+            touch-action: manipulation;
+        }
+
+        .start-screen {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 100;
+        }
+
+        .start-btn {
+            padding: 15px 30px;
+            font-size: 1.5rem;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .game-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            border: 4px solid #4a2c2a;
+            border-radius: 10px;
+            box-shadow: 0 0 40px rgba(0,0,0,0.3);
+            background: linear-gradient(to bottom, #ffd89b, #f7b733);
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 90vh;
+        }
+
+        .hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #4a2c2a;
+            text-shadow: 2px 2px 0 #fff;
+            z-index: 2;
+        }
+
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 2rem;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            box-shadow: 0 0 30px rgba(0,0,0,0.3);
+            animation: popIn 0.3s ease-out;
+            z-index: 3;
+        }
+
+        @keyframes popIn {
+            0% { transform: translate(-50%, -50%) scale(0.5); }
+            80% { transform: translate(-50%, -50%) scale(1.1); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+
+        .restart-btn {
+            background: #4CAF50;
+            border: none;
+            padding: 15px 30px;
+            color: white;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+            margin-top: 1rem;
+        }
+
+        .mobile-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 4;
+        }
+
+        .control-area {
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+        }
+
+        @media (min-width: 768px) {
+            .mobile-controls {
+                display: none;
+            }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="start-screen" id="startScreen">
+        <button class="start-btn" onclick="GameManager.init()">START GAME</button>
+    </div>
+    
+    <div class="game-container">
+        <div class="hud">
+            <h2>SCORE: <span id="score">0</span></h2>
+            <h2>LEVEL: <span id="level">1</span></h2>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div class="game-over" id="gameOver">
+            <h2 style="color: #e74c3c; margin-bottom: 1rem;">GAME OVER!</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 1.5rem;">FINAL SCORE: <span id="finalScore">0</span></p>
+            <button class="restart-btn" onclick="GameManager.restart()">PLAY AGAIN</button>
+        </div>
+        <div class="mobile-controls">
+            <div class="control-area" id="controlPad"></div>
+        </div>
+    </div>
+
+<script>
+const GameManager = (() => {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let animationFrameId = null;
+    let audioContext = null;
+
+    const CONFIG = {
+        playerSpeed: 7,
+        bulletSpeed: 12,
+        enemyBaseSpeed: 3,
+        gravity: 0.8,
+        jumpPower: 20,
+        enemySpawnInterval: 1500,
+        speedIncreaseInterval: 30000,
+        boxSpawnInterval: 5000
+    };
+
+    const state = {
+        player: null,
+        bullets: [],
+        enemies: [],
+        boxes: [],
+        score: 0,
+        level: 1,
+        enemySpeed: CONFIG.enemyBaseSpeed,
+        active: false,
+        intervals: []
+    };
+
+    const assets = {
+        player: new Image(),
+        enemy: new Image(),
+        box: new Image(),
+        audio: {
+            shoot: new Audio('https://assets.mixkit.co/active_storage/sfx/2147/2147-preview.mp3'),
+            hit: new Audio('https://assets.mixkit.co/active_storage/sfx/2747/2747-preview.mp3'),
+            music: new Audio('https://assets.mixkit.co/music/preview/mixkit-game-level-music-689.mp3')
+        }
+    };
+
+    const initAudio = () => {
+        assets.audio.music.volume = 0.5;
+        assets.audio.music.loop = true;
+        assets.audio.shoot.volume = 0.3;
+        assets.audio.hit.volume = 0.5;
+    };
+
+    const loadResources = async () => {
+        return new Promise((resolve, reject) => {
+            let loaded = 0;
+            const checkLoad = () => ++loaded === 3 && resolve();
+            
+            assets.player.onload = checkLoad;
+            assets.enemy.onload = checkLoad;
+            box.onload = checkLoad;
+
+            assets.player.src = 'https://img.icons8.com/plasticine/100/cactus.png';
+            assets.enemy.src = 'https://img.icons8.com/color/96/terrorist.png';
+            assets.box.src = 'https://img.icons8.com/color/96/wooden-crate.png';
+        });
+    };
+
+    const setupCanvas = () => {
+        const aspectRatio = 16/9;
+        const width = Math.min(window.innerWidth, 800);
+        canvas.width = width;
+        canvas.height = width / aspectRatio;
+    };
+
+    const initControls = () => {
+        const controlPad = document.getElementById('controlPad');
+        let lastTap = 0;
+
+        const handleTouch = (e) => {
+            e.preventDefault();
+            const now = Date.now();
+            if (now - lastTap < 300) GameManager.shoot();
+            else setTimeout(() => GameManager.jump(), 200);
+            lastTap = now;
+        };
+
+        controlPad.addEventListener('touchstart', handleTouch);
+        controlPad.addEventListener('touchend', e => e.preventDefault());
+
+        document.addEventListener('keydown', (e) => {
+            if (!state.active) return;
+            switch(e.key) {
+                case 'ArrowLeft': GameManager.move(-1); break;
+                case 'ArrowRight': GameManager.move(1); break;
+                case ' ': GameManager.shoot(); break;
+                case 'ArrowUp': GameManager.jump(); break;
+            }
+        });
+    };
+
+    const gameLoop = () => {
+        if (!state.active) return;
+        
+        update();
+        render();
+        animationFrameId = requestAnimationFrame(gameLoop);
+    };
+
+    const update = () => {
+        // Player physics
+        state.player.y += state.player.velocityY;
+        state.player.velocityY += CONFIG.gravity;
+        
+        // Collision detection
+        state.enemies.forEach(enemy => {
+            if (checkCollision(state.player, enemy)) GameManager.end();
+        });
+
+        // Update entities
+        state.bullets = state.bullets.filter(bullet => {
+            bullet.x += CONFIG.bulletSpeed;
+            return bullet.x < canvas.width;
+        });
+
+        // ... остальная логика обновления ...
+    };
+
+    const render = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw player
+        ctx.drawImage(
+            assets.player,
+            state.player.x,
+            state.player.y,
+            state.player.width,
+            state.player.height
+        );
+
+        // ... остальная логика отрисовки ...
+    };
+
+    return {
+        init: async () => {
+            try {
+                document.getElementById('startScreen').style.display = 'none';
+                await loadResources();
+                setupCanvas();
+                initControls();
+                initAudio();
+                
+                state.player = {
+                    x: 100,
+                    y: canvas.height - 80,
+                    width: 60,
+                    height: 80,
+                    velocityY: 0,
+                    isJumping: false
+                };
+
+                state.active = true;
+                assets.audio.music.play();
+                gameLoop();
+            } catch (error) {
+                console.error('Initialization error:', error);
+            }
+        },
+
+        move: (direction) => {
+            state.player.x = Math.max(10, Math.min(
+                canvas.width - state.player.width - 10,
+                state.player.x + direction * CONFIG.playerSpeed
+            ));
+        },
+
+        jump: () => {
+            if (!state.player.isJumping) {
+                state.player.velocityY = -CONFIG.jumpPower;
+                state.player.isJumping = true;
+            }
+        },
+
+        shoot: () => {
+            state.bullets.push({
+                x: state.player.x + state.player.width,
+                y: state.player.y + state.player.height/2,
+                width: 10,
+                height: 5
+            });
+            assets.audio.shoot.play().catch(() => {});
+        },
+
+        end: () => {
+            state.active = false;
+            cancelAnimationFrame(animationFrameId);
+            state.intervals.forEach(clearInterval);
+            assets.audio.music.pause();
+            document.getElementById('gameOver').style.display = 'block';
+        },
+
+        restart: () => {
+            GameManager.end();
+            state.score = 0;
+            state.level = 1;
+            state.enemies = [];
+            state.bullets = [];
+            document.getElementById('gameOver').style.display = 'none';
+            GameManager.init();
+        }
+    };
+})();
+
+window.addEventListener('resize', () => {
+    const canvas = document.getElementById('gameCanvas');
+    const aspectRatio = 16/9;
+    const width = Math.min(window.innerWidth, 800);
+    canvas.width = width;
+    canvas.height = width / aspectRatio;
+});
+
+window.addEventListener('load', () => {
+    GameManager.init = () => alert('Нажмите кнопку START GAME');
+});
+</script>
+</body>
+</html>
